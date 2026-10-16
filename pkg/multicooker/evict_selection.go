@@ -50,6 +50,8 @@ func (s PodCandidateSet) scoreByQOSClass() {
 			s[i].Score += 100
 		case v1.PodQOSBurstable:
 			s[i].Score += 100
+		case v1.PodQOSGuaranteed:
+			s[i].Score -= 10000
 		}
 	}
 }
@@ -115,9 +117,25 @@ func (s PodCandidateSet) scoreByCriticality() {
 	}
 }
 
-func (s PodCandidateSet) SelectPodForEviction(minPodAge time.Duration) *v1.Pod {
+// scoreByMemoryLimit prefers pods that can grow without bound: a container
+// without a memory limit is the likeliest source of node memory pressure.
+func (s PodCandidateSet) scoreByMemoryLimit() {
+	for i := range s {
+		for _, c := range s[i].Pod.Spec.Containers {
+			if _, ok := c.Resources.Limits[v1.ResourceMemory]; !ok {
+				s[i].Score += 50
+				break
+			}
+		}
+	}
+}
+
+func (s PodCandidateSet) SelectPodForEviction(minPodAge time.Duration, resource string) *v1.Pod {
 	s.scoreByAge(minPodAge)
 	s.scoreByQOSClass()
+	if resource == ResourceMemory {
+		s.scoreByMemoryLimit()
+	}
 	s.scoreByOwnerType()
 	s.scoreByCriticality()
 

@@ -47,6 +47,17 @@ The ration to remove old pods first is tat it is usually better to move well beh
 than moving bad neighbors through the cluster. And as a node will always stay in a healthy state it can be assumed
 that the older pods are less likely to be the cause of an overload.
 
+## Memory guard
+
+Optionally the controller also watches the node's available memory (`MemAvailable / MemTotal` from `/proc/meminfo`, in percent). It works on every kernel, including nodes without PSI, and acts earlier and softer than kubelet's hard `memory.available` eviction.
+
+- `-memory-taint-threshold`: when available memory drops below this percentage, the node gets a separate `multicooker/memory-pressure` taint with the `NoSchedule` effect: memory cannot be throttled like CPU, so new pods are kept off the node strictly. Other DaemonSets need a toleration for this taint to roll out onto a node while it is set. The taint is removed once available memory is back at or above the threshold. `0` (the default) disables the memory guard.
+- `-memory-evict-threshold`: while the memory taint is set and available memory is below this percentage, a Pod is evicted using the same safety rules, `-evict-backoff` and `-min-pod-age` as the CPU path. Among eligible Pods, those with a container without a memory limit are evicted first. Must be lower than or equal to the taint threshold; `0` disables memory eviction.
+
+The memory and CPU taints are independent: CPU recovery never removes the memory taint and vice versa. Both share one eviction back-off, so together they evict at most one Pod per back-off period.
+
+In the chart this is `memoryGuard.enabled` / `memoryGuard.taintThreshold` / `memoryGuard.evictThreshold` (default on, 10% / 5%). Metrics: `multicooker_memory_available_percent`, `multicooker_memory_pressure_exceeded`.
+
 ## Installation
 
 There is a helm chart in the repo.

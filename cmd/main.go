@@ -23,7 +23,9 @@ var (
 	pressureThresholdExceededTotal,
 	pressureRecoveredTotal,
 	pressureThresholdExceeded,
-	pressureEnabled prometheus.Gauge
+	pressureEnabled,
+	memoryAvailablePercent,
+	memoryPressureExceeded prometheus.Gauge
 	f config.StartupFlags
 )
 
@@ -37,6 +39,8 @@ func init() {
 	flag.IntVar(&f.MetricsPort, "metrics-port", 8080, "port for prometheus metrics endpoint")
 	flag.IntVar(&f.TargetMetric, "target-metric", 3, "target metric to use / 10,60,300 for pressure; and 1,5,15 for avarage/")
 	flag.BoolVar(&f.UseAvarage, "use-avarage", false, "use loadavg instead of proc/pressure/cpu")
+	flag.Float64Var(&f.MemoryTaintThreshold, "memory-taint-threshold", 0, "taint the node when available memory drops below this percentage; 0 disables the memory guard")
+	flag.Float64Var(&f.MemoryEvictThreshold, "memory-evict-threshold", 0, "evict a pod when available memory drops below this percentage; 0 disables memory eviction")
 	flag.Parse()
 
 	prometheusNamespace := "multicooker"
@@ -59,6 +63,16 @@ func init() {
 		Namespace: prometheusNamespace,
 		Name:      "enabled",
 		Help:      "multicooker is enabled (1) or disabled (0)",
+	})
+	memoryAvailablePercent = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: prometheusNamespace,
+		Name:      "memory_available_percent",
+		Help:      "available memory on the node as a percentage of total memory",
+	})
+	memoryPressureExceeded = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: prometheusNamespace,
+		Name:      "memory_pressure_exceeded",
+		Help:      "available memory is currently below (1) or above (0) the memory taint threshold",
 	})
 }
 
@@ -95,6 +109,31 @@ func main() {
 	e, err := multicooker.NewEvicter(c, f.NodeName, f.EvictBackoff, f.MinPodAge)
 	if err != nil {
 		panic(err)
+	}
+
+	var (
+		mg           *multicooker.MemoryGuard
+		mt           *multicooker.Tainter
+		memTick      <-chan time.Time
+		isMemTainted bool
+	)
+	if f.MemoryTaintThreshold > 0 {
+		if mg, err = multicooker.NewMemoryGuard(f.MemoryTaintThreshold, f.MemoryEvictThreshold); err != nil {
+			panic(err)
+		}
+		if mt, err = multicooker.NewMemoryTainter(c, f.NodeName); err != nil {
+			panic(err)
+		}
+		if isMemTainted, err = mt.IsNodeTainted(); err != nil {
+			panic(err)
+		}
+		prometheus.MustRegister(memoryAvailablePercent)
+		prometheus.MustRegister(memoryPressureExceeded)
+		if isMemTainted {
+			memoryPressureExceeded.Set(1)
+		}
+		memTick = time.Tick(15 * time.Second)
+		glog.Infof("memory guard enabled: taint below %.2f%% available, evict below %.2f%%", f.MemoryTaintThreshold, f.MemoryEvictThreshold)
 	}
 
 	closeChan := make(chan struct{})
@@ -200,6 +239,52 @@ func main() {
 					isTainted = false
 					pressureThresholdExceeded.Set(0)
 					pressureRecoveredTotal.Inc()
+				}
+			}
+		case <-memTick:
+			evt, err := mg.Check()
+			if err != nil {
+				glog.Errorf("error while checking memory: %s", err.Error())
+				continue
+			}
+			memoryAvailablePercent.Set(evt.MeticValue)
+
+			if isDisabled {
+				if isMemTainted {
+					if err := mt.UntaintNode(evt); err != nil {
+						glog.Errorf("error while removing memory taint from node: %s", err.Error())
+					} else {
+						isMemTainted = false
+						memoryPressureExceeded.Set(0)
+					}
+				}
+				continue
+			}
+
+			if evt.IsCurrentlyHigh {
+				if isMemTainted {
+					if mg.ShouldEvict(evt) {
+						if _, err := e.EvictPod(evt); err != nil {
+							glog.Errorf("error while evicting pod: %s", err.Error())
+						}
+					}
+					continue
+				}
+
+				glog.Infof(evt.Message)
+				if err := mt.TaintNode(evt); err != nil {
+					glog.Errorf("error while tainting node for memory: %s", err.Error())
+				} else {
+					isMemTainted = true
+					memoryPressureExceeded.Set(1)
+				}
+			} else if isMemTainted {
+				glog.Infof(evt.Message)
+				if err := mt.UntaintNode(evt); err != nil {
+					glog.Errorf("error while removing memory taint from node: %s", err.Error())
+				} else {
+					isMemTainted = false
+					memoryPressureExceeded.Set(0)
 				}
 			}
 		case err := <-errs:

@@ -10,4 +10,7 @@ type StartupFlags struct {
 	MetricsPort    int
 	TargetMetric   int
 	UseAvarage     bool
+
+	MemoryTaintThreshold float64
+	MemoryEvictThreshold float64
 }

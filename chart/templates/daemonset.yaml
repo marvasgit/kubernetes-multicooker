@@ -53,6 +53,10 @@ spec:
             {{- if .Values.targetMetric }}
             - -target-metric={{ .Values.targetMetric }}
             {{- end }}
+            {{- if .Values.memoryGuard.enabled }}
+            - -memory-taint-threshold={{ .Values.memoryGuard.taintThreshold }}
+            - -memory-evict-threshold={{ .Values.memoryGuard.evictThreshold }}
+            {{- end }}
           resources:
 {{ toYaml .Values.resources | indent 12 }}
     {{- with .Values.nodeSelector }}
@@ -67,6 +71,8 @@ spec:
         - key: multicooker/load-exceeded
           operator: Exists
           effect: NoSchedule
+        - key: multicooker/memory-pressure
+          operator: Exists
         {{- with .Values.tolerations }}
 {{ toYaml . | indent 8 }}
         {{- end }}

@@ -54,7 +54,7 @@ func (e *Evicter) EvictPod(evt PressureThresholdEvent) (bool, error) {
 	}
 
 	candidates := PodCandidateSetFromPodList(podsOnNode)
-	podToEvict := candidates.SelectPodForEviction(e.minPodAge)
+	podToEvict := candidates.SelectPodForEviction(e.minPodAge, evt.Resource)
 
 	if podToEvict == nil {
 		e.recorder.Eventf(e.nodeRef, corev1.EventTypeWarning, "NoPodToEvict", "wanted to evict Pod, but no suitable candidate found")
@@ -74,8 +74,13 @@ func (e *Evicter) EvictPod(evt PressureThresholdEvent) (bool, error) {
 
 	e.lastEviction = time.Now()
 
-	e.recorder.Eventf(podToEvict, corev1.EventTypeWarning, "EvictHighLoad", "evicting pod due to %s", evt.Message)
-	e.recorder.Eventf(e.nodeRef, corev1.EventTypeWarning, "EvictHighLoad", "evicting pod due to high cpu pressure on node: %s", evt.Message)
+	reason := "EvictHighLoad"
+	if evt.Resource == ResourceMemory {
+		reason = "EvictLowMemory"
+	}
+
+	e.recorder.Eventf(podToEvict, corev1.EventTypeWarning, reason, "evicting pod due to %s", evt.Message)
+	e.recorder.Eventf(e.nodeRef, corev1.EventTypeWarning, reason, "evicting pod due to high %s pressure on node: %s", evt.Resource, evt.Message)
 
 	err = e.client.CoreV1().Pods(podToEvict.Namespace).Evict(context.TODO(), &eviction)
 	return true, err

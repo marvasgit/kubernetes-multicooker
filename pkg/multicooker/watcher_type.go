@@ -6,10 +6,16 @@ import (
 	"github.com/prometheus/procfs"
 )
 
+const (
+	ResourceCPU    = "cpu"
+	ResourceMemory = "memory"
+)
+
 type PressureThresholdEvent struct {
 	Message         string
 	MeticValue      float64
 	IsCurrentlyHigh bool
+	Resource        string
 }
 
 type Watcher struct {
