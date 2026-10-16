@@ -46,7 +46,7 @@ func (w *Watcher) Run(closeChan chan struct{}, useAvarage bool, targetMetic int)
 
 				result <- PressureThresholdEvent{
 					Message:    w.generateEventMessage(useAvarage, res, targetMetic),
-					MeticValue: res[targetMetic-1], IsCurrentlyHigh: w.isCurrentlyHigh}
+					MeticValue: res[targetMetic-1], IsCurrentlyHigh: w.isCurrentlyHigh, Resource: ResourceCPU}
 
 			case <-closeChan:
 				glog.Error("ClosingChan stopping")

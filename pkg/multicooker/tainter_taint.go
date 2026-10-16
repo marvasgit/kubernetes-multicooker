@@ -19,7 +19,7 @@ func (t *Tainter) IsNodeTainted() (bool, error) {
 	}
 
 	for i := range node.Spec.Taints {
-		if node.Spec.Taints[i].Key == TaintKey {
+		if node.Spec.Taints[i].Key == t.taintKey {
 			return true, nil
 		}
 	}
@@ -55,21 +55,21 @@ func (t *Tainter) TaintNode(evt PressureThresholdEvent) error {
 	}
 
 	for i := range nodeCopy.Spec.Taints {
-		if nodeCopy.Spec.Taints[i].Key == TaintKey {
+		if nodeCopy.Spec.Taints[i].Key == t.taintKey {
 			glog.Infof("wanted to taint node %s, but taint already exists", nodeCopy.Name)
 			return nil
 		}
 	}
 
 	nodeCopy.Spec.Taints = append(nodeCopy.Spec.Taints, v1.Taint{
-		Key:    TaintKey,
+		Key:    t.taintKey,
 		Value:  "true",
-		Effect: v1.TaintEffectPreferNoSchedule,
+		Effect: t.taintEffect,
 	})
 
 	_, err = t.client.CoreV1().Nodes().Update(context.TODO(), nodeCopy, metav1.UpdateOptions{})
 
-	t.recorder.Eventf(t.nodeRef, v1.EventTypeWarning, "CPUPressureExceeded", "pressure over 5 minutes on node was %.2f, tainting node", evt.MeticValue)
+	t.recorder.Eventf(t.nodeRef, v1.EventTypeWarning, t.exceededReason, t.exceededMessage, evt.MeticValue)
 
 	if err != nil {
 		t.recorder.Eventf(t.nodeRef, v1.EventTypeWarning, "NodePatchError", "could not patch node: %s", err.Error())
@@ -87,8 +87,8 @@ func (t *Tainter) UntaintNode(evt PressureThresholdEvent) error {
 
 	taintIndex := -1
 
-	for i, t := range node.Spec.Taints {
-		if t.Key == TaintKey {
+	for i, taint := range node.Spec.Taints {
+		if taint.Key == t.taintKey {
 			taintIndex = i
 			break
 		}
@@ -99,12 +99,12 @@ func (t *Tainter) UntaintNode(evt PressureThresholdEvent) error {
 		return nil
 	}
 
-	t.recorder.Eventf(t.nodeRef, v1.EventTypeNormal, "LoadThresholdDeceeded", "pressure on node was %.2f over 5 minutes. untainting node", evt.MeticValue)
+	t.recorder.Eventf(t.nodeRef, v1.EventTypeNormal, t.recoveredReason, t.recoveredMessage, evt.MeticValue)
 
 	_, err = t.client.CoreV1().Nodes().Patch(context.TODO(), t.nodeName, types.JSONPatchType, jsonpatch.PatchList{{
 		Op:    "test",
 		Path:  fmt.Sprintf("/spec/taints/%d/key", taintIndex),
-		Value: TaintKey,
+		Value: t.taintKey,
 	}, {
 		Op:    "remove",
 		Path:  fmt.Sprintf("/spec/taints/%d", taintIndex),
